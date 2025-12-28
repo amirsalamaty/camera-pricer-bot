@@ -470,27 +470,39 @@ def list_users(message):
     
     bot.reply_to(message, text, parse_mode="Markdown")
 
-# ---------- Text Button Handlers ----------
-@bot.message_handler(func=lambda m: m.text in ["📊 لیست محصولات", "💰 محاسبه قیمت", "⚙️ تنظیمات", "📈 آمار", "❓ راهنما", "👑 پنل ادمین"])
+# ---------- Menu Buttons List ----------
+MENU_BUTTONS = ["📊 لیست محصولات", "💰 محاسبه قیمت", "⚙️ تنظیمات", "📈 آمار", "❓ راهنما", "👑 پنل ادمین"]
+
 def handle_menu_buttons(message):
+    """Handle menu button presses"""
     if not is_allowed(message.chat.id):
-        return
+        return True  # Handled
     
-    if message.text == "📊 لیست محصولات":
+    text = message.text.strip() if message.text else ""
+    
+    if text == "📊 لیست محصولات":
         list_products_cmd(message)
-    elif message.text == "💰 محاسبه قیمت":
+        return True
+    elif text == "💰 محاسبه قیمت":
         bot.reply_to(message, "💵 نرخ دلار را بفرستید:\nمثال: `58500`", parse_mode="Markdown")
-    elif message.text == "⚙️ تنظیمات":
+        return True
+    elif text == "⚙️ تنظیمات":
         show_settings(message)
-    elif message.text == "📈 آمار":
+        return True
+    elif text == "📈 آمار":
         show_stats(message)
-    elif message.text == "❓ راهنما":
+        return True
+    elif text == "❓ راهنما":
         send_help(message)
-    elif message.text == "👑 پنل ادمین":
+        return True
+    elif text == "👑 پنل ادمین":
         if is_admin(message.chat.id):
             show_admin_panel(message.chat.id)
         else:
             bot.reply_to(message, "⛔ دسترسی ندارید.")
+        return True
+    
+    return False  # Not handled
 
 # ---------- Callback Query Handler ----------
 @bot.callback_query_handler(func=lambda call: True)
@@ -655,7 +667,13 @@ def handle_all_messages(message):
         bot.reply_to(message, f"⛔ دسترسی ندارید.\n🆔 `{user_id}`", parse_mode="Markdown")
         return
     
-    text = message.text.strip()
+    text = message.text.strip() if message.text else ""
+    
+    # First check if it's a menu button
+    if text in MENU_BUTTONS:
+        handle_menu_buttons(message)
+        return
+    
     state = user_states.get(user_id)
     
     # Adding Product
