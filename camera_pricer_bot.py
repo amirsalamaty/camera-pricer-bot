@@ -1,5 +1,5 @@
 """
-Camera Pricer Bot - Professional Edition
+Camera Pricer Bot - Professional Edition v2.0
 Telegram bot for camera pricing with full admin control
 """
 
@@ -81,12 +81,11 @@ DEFAULT_SETTINGS = {
     "dirham_rate": 3.67,
     "base_markup": 20000000,
     "percentages": [0.03, 0.04, 0.05, 0.06, 0.10],
-    "round_to": -6,  # گرد کردن به میلیون
+    "round_to": -6,
 }
 
 # ---------- Data Management Functions ----------
 def load_json(filepath, default):
-    """Load JSON file or return default value"""
     try:
         if filepath.exists():
             with open(filepath, 'r', encoding='utf-8') as f:
@@ -96,7 +95,6 @@ def load_json(filepath, default):
     return default.copy() if isinstance(default, dict) else default[:]
 
 def save_json(filepath, data):
-    """Save data to JSON file"""
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -133,27 +131,62 @@ def is_admin(user_id):
     return user_id in users.get("admins", [])
 
 # ---------- Keyboards ----------
-def main_keyboard():
+def main_keyboard(user_id):
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
         KeyboardButton("📊 لیست محصولات"),
         KeyboardButton("💰 محاسبه قیمت"),
+    )
+    markup.add(
         KeyboardButton("⚙️ تنظیمات"),
         KeyboardButton("📈 آمار"),
-        KeyboardButton("❓ راهنما")
     )
+    if is_admin(user_id):
+        markup.add(KeyboardButton("👑 پنل ادمین"))
+    markup.add(KeyboardButton("❓ راهنما"))
     return markup
 
 def admin_keyboard():
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
         InlineKeyboardButton("➕ افزودن محصول", callback_data="add_product"),
-        InlineKeyboardButton("✏️ ویرایش محصول", callback_data="edit_product"),
-        InlineKeyboardButton("🗑️ حذف محصول", callback_data="delete_product"),
-        InlineKeyboardButton("👥 مدیریت کاربران", callback_data="manage_users"),
-        InlineKeyboardButton("⚙️ تنظیمات پیشرفته", callback_data="advanced_settings"),
-        InlineKeyboardButton("🔄 ریست به پیش‌فرض", callback_data="reset_defaults")
+        InlineKeyboardButton("✏️ ویرایش قیمت", callback_data="edit_product"),
     )
+    markup.add(
+        InlineKeyboardButton("🗑️ حذف محصول", callback_data="delete_product"),
+        InlineKeyboardButton("📋 لیست محصولات", callback_data="list_products"),
+    )
+    markup.add(
+        InlineKeyboardButton("💰 تغییر مارکاپ", callback_data="set_markup"),
+        InlineKeyboardButton("💵 نرخ درهم", callback_data="set_dirham"),
+    )
+    markup.add(
+        InlineKeyboardButton("📊 تغییر درصدها", callback_data="set_percentages"),
+        InlineKeyboardButton("👥 کاربران", callback_data="manage_users"),
+    )
+    markup.add(
+        InlineKeyboardButton("🔄 ریست به پیش‌فرض", callback_data="reset_defaults"),
+    )
+    return markup
+
+def quick_actions_keyboard():
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("➕ افزودن دیگر", callback_data="add_product"),
+        InlineKeyboardButton("✏️ ویرایش", callback_data="edit_product"),
+    )
+    markup.add(
+        InlineKeyboardButton("🗑️ حذف", callback_data="delete_product"),
+        InlineKeyboardButton("📋 لیست", callback_data="list_products"),
+    )
+    markup.add(
+        InlineKeyboardButton("🔙 پنل ادمین", callback_data="back_admin"),
+    )
+    return markup
+
+def back_to_admin_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="back_admin"))
     return markup
 
 def settings_keyboard():
@@ -162,12 +195,76 @@ def settings_keyboard():
         InlineKeyboardButton("💵 تغییر نرخ درهم", callback_data="set_dirham"),
         InlineKeyboardButton("📊 تغییر درصدها", callback_data="set_percentages"),
         InlineKeyboardButton("💰 تغییر مارکاپ پایه", callback_data="set_markup"),
-        InlineKeyboardButton("🔙 بازگشت", callback_data="back_main")
+        InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin")
     )
     return markup
 
 # ---------- User States ----------
 user_states = {}
+
+# ---------- Format Helpers ----------
+def format_number(num):
+    return f"{num:,.0f}"
+
+def format_price_table(products, settings, rate):
+    dirham_rate = settings['dirham_rate']
+    base_markup = settings['base_markup']
+    percentages = settings['percentages']
+    round_to = settings['round_to']
+    
+    result = "╔══════════════════════════════╗\n"
+    result += "║  📊 *جدول قیمت دوربین*\n"
+    result += "╠══════════════════════════════╣\n"
+    result += f"║ 💵 دلار: `{format_number(rate)}`\n"
+    result += f"║ 🏷️ درهم: `{dirham_rate}`\n"
+    result += f"║ 📦 مارکاپ: `{format_number(base_markup)}`\n"
+    result += "╚══════════════════════════════╝\n\n"
+    
+    for name, base_price in products.items():
+        price = ((base_price * dirham_rate) * rate) + base_markup
+        
+        result += f"┌────────────────────────\n"
+        result += f"│ 📷 *{name}*  •  `${base_price:,}`\n"
+        result += f"├────────────────────────\n"
+        
+        for pct in percentages:
+            calc = price * (1 + pct)
+            calc = round(calc, round_to)
+            if pct <= 0.03:
+                emoji = "🟢"
+            elif pct <= 0.05:
+                emoji = "🟡"
+            elif pct <= 0.06:
+                emoji = "🟠"
+            else:
+                emoji = "🔴"
+            result += f"│ {emoji} {int(pct*100):2d}% → `{format_number(calc)}`\n"
+        
+        result += f"└────────────────────────\n\n"
+    
+    result += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    
+    return result
+
+def format_products_list(products):
+    if not products:
+        return "📭 هیچ محصولی ثبت نشده است."
+    
+    result = "╔══════════════════════════════╗\n"
+    result += "║      📦 *لیست محصولات*\n"
+    result += "╠══════════════════════════════╣\n"
+    
+    for i, (name, price) in enumerate(products.items(), 1):
+        result += f"║ {i}. *{name}*\n"
+        result += f"║    💵 `${price:,}`\n"
+        if i < len(products):
+            result += "║ ─────────────────────\n"
+    
+    result += "╠══════════════════════════════╣\n"
+    result += f"║ 📊 مجموع: *{len(products)}* محصول\n"
+    result += "╚══════════════════════════════╝"
+    
+    return result
 
 # ---------- Command Handlers ----------
 @bot.message_handler(commands=['start'])
@@ -176,27 +273,25 @@ def send_welcome(message):
     
     if not is_allowed(user_id):
         bot.reply_to(message, 
-            f"⛔ شما اجازه دسترسی ندارید.\n"
-            f"🆔 آیدی شما: `{user_id}`\n"
-            f"این آیدی را به ادمین ارسال کنید.",
+            f"⛔ شما دسترسی ندارید.\n🆔 آیدی: `{user_id}`",
             parse_mode="Markdown"
         )
-        logger.warning(f"Unauthorized access attempt: {user_id}")
+        logger.warning(f"Unauthorized: {user_id}")
         return
     
+    admin_badge = "👑 ادمین" if is_admin(user_id) else "👤 کاربر"
+    
     welcome_text = f"""
-🎉 *خوش آمدید به ربات قیمت‌گذاری دوربین!*
-
-👤 کاربر: `{user_id}`
-{'👑 سطح: ادمین' if is_admin(user_id) else '👤 سطح: کاربر عادی'}
-
-📌 *دستورات سریع:*
-• برای محاسبه قیمت، نرخ دلار را ارسال کنید
-• از دکمه‌های زیر استفاده کنید
-
-⏰ آخرین بروزرسانی: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+╔══════════════════════════════╗
+║  🎉 *خوش آمدید!*
+╠══════════════════════════════╣
+║  🆔 `{user_id}`
+║  🏷️ {admin_badge}
+╠══════════════════════════════╣
+║  💡 نرخ دلار را بفرستید
+╚══════════════════════════════╝
 """
-    bot.reply_to(message, welcome_text, parse_mode="Markdown", reply_markup=main_keyboard())
+    bot.reply_to(message, welcome_text, parse_mode="Markdown", reply_markup=main_keyboard(user_id))
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
@@ -204,54 +299,55 @@ def send_help(message):
         return
     
     help_text = """
-📖 *راهنمای کامل ربات*
-
-*🔢 محاسبه قیمت:*
-فقط نرخ دلار را ارسال کنید (مثلاً: 58500)
-
-*📋 دستورات:*
-/start - شروع مجدد
-/help - راهنما
-/products - لیست محصولات
-/settings - تنظیمات
-/stats - آمار
-
-*👑 دستورات ادمین:*
-/admin - پنل مدیریت
-/adduser [ID] - افزودن کاربر
-/removeuser [ID] - حذف کاربر
-/addproduct [نام] [قیمت] - افزودن محصول
-/delproduct [نام] - حذف محصول
-
-*📊 فرمول محاسبه:*
-`(قیمت_دلار × ۳.۶۷ × نرخ_تبدیل) + ۲۰,۰۰۰,۰۰۰`
+╔══════════════════════════════╗
+║      📖 *راهنما*
+╠══════════════════════════════╣
+║ 
+║ *محاسبه قیمت:*
+║ نرخ دلار را بفرستید
+║ مثال: `58500`
+║ 
+║ *فرمول:*
+║ `(دلار × درهم × نرخ) + مارکاپ`
+║ 
+╚══════════════════════════════╝
 """
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['admin'])
 def admin_panel(message):
     if not is_admin(message.chat.id):
-        bot.reply_to(message, "⛔ فقط ادمین‌ها دسترسی دارند.")
+        bot.reply_to(message, "⛔ دسترسی ندارید.")
         return
+    show_admin_panel(message.chat.id)
+
+def show_admin_panel(chat_id, message_id=None):
+    settings = load_settings()
+    products = load_products()
     
-    bot.reply_to(message, "👑 *پنل مدیریت*\nیک گزینه انتخاب کنید:", 
-                 parse_mode="Markdown", reply_markup=admin_keyboard())
+    text = f"""
+╔══════════════════════════════╗
+║      👑 *پنل مدیریت*
+╠══════════════════════════════╣
+║ 📦 محصولات: *{len(products)}*
+║ 💰 مارکاپ: `{format_number(settings['base_markup'])}`
+║ 💵 درهم: `{settings['dirham_rate']}`
+║ 📊 درصدها: `{', '.join([f"{int(p*100)}%" for p in settings['percentages']])}`
+╚══════════════════════════════╝
+"""
+    
+    if message_id:
+        bot.edit_message_text(text, chat_id, message_id, 
+                             parse_mode="Markdown", reply_markup=admin_keyboard())
+    else:
+        bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=admin_keyboard())
 
 @bot.message_handler(commands=['products'])
-def list_products(message):
+def list_products_cmd(message):
     if not is_allowed(message.chat.id):
         return
-    
     products = load_products()
-    if not products:
-        bot.reply_to(message, "📭 هیچ محصولی ثبت نشده است.")
-        return
-    
-    text = "📦 *لیست محصولات:*\n\n"
-    for i, (name, price) in enumerate(products.items(), 1):
-        text += f"{i}. *{name}* → ${price:,}\n"
-    
-    text += f"\n📊 تعداد کل: {len(products)} محصول"
+    text = format_products_list(products)
     bot.reply_to(message, text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['settings'])
@@ -261,14 +357,14 @@ def show_settings(message):
     
     settings = load_settings()
     text = f"""
-⚙️ *تنظیمات فعلی:*
-
-💵 نرخ درهم: `{settings['dirham_rate']}`
-💰 مارکاپ پایه: `{settings['base_markup']:,}` تومان
-📊 درصدها: `{', '.join([f'{int(p*100)}%' for p in settings['percentages']])}`
-🔢 گرد کردن: `{abs(settings['round_to'])}` رقم
+╔══════════════════════════════╗
+║      ⚙️ *تنظیمات*
+╠══════════════════════════════╣
+║ 💵 درهم: `{settings['dirham_rate']}`
+║ 💰 مارکاپ: `{format_number(settings['base_markup'])}`
+║ 📊 درصدها: `{', '.join([f'{int(p*100)}%' for p in settings['percentages']])}`
+╚══════════════════════════════╝
 """
-    
     if is_admin(message.chat.id):
         bot.reply_to(message, text, parse_mode="Markdown", reply_markup=settings_keyboard())
     else:
@@ -281,40 +377,44 @@ def show_stats(message):
     
     products = load_products()
     users = load_users()
+    settings = load_settings()
     
     text = f"""
-📈 *آمار ربات:*
-
-📦 تعداد محصولات: {len(products)}
-👥 کاربران مجاز: {len(users.get('allowed', []))}
-👑 ادمین‌ها: {len(users.get('admins', []))}
-⏰ زمان سرور: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+╔══════════════════════════════╗
+║      📈 *آمار*
+╠══════════════════════════════╣
+║ 📦 محصولات: *{len(products)}*
+║ 👥 کاربران: *{len(users.get('allowed', []))}*
+║ 👑 ادمین‌ها: *{len(users.get('admins', []))}*
+╠══════════════════════════════╣
+║ 💰 مارکاپ: `{format_number(settings['base_markup'])}`
+║ ⏰ {datetime.now().strftime('%H:%M:%S')}
+╚══════════════════════════════╝
 """
     bot.reply_to(message, text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['adduser'])
 def add_user_cmd(message):
     if not is_admin(message.chat.id):
-        bot.reply_to(message, "⛔ فقط ادمین‌ها دسترسی دارند.")
         return
     
     try:
         parts = message.text.split()
         if len(parts) < 2:
-            bot.reply_to(message, "❌ فرمت صحیح: `/adduser [ID]`", parse_mode="Markdown")
+            bot.reply_to(message, "❌ `/adduser [ID]`", parse_mode="Markdown")
             return
         
         new_user_id = int(parts[1])
         users = load_users()
         
         if new_user_id in users.get("allowed", []):
-            bot.reply_to(message, "⚠️ این کاربر قبلاً اضافه شده است.")
+            bot.reply_to(message, "⚠️ قبلاً اضافه شده.")
             return
         
         users.setdefault("allowed", []).append(new_user_id)
         save_users(users)
-        bot.reply_to(message, f"✅ کاربر `{new_user_id}` با موفقیت اضافه شد.", parse_mode="Markdown")
-        logger.info(f"New user added: {new_user_id} by {message.chat.id}")
+        bot.reply_to(message, f"✅ کاربر `{new_user_id}` اضافه شد.", parse_mode="Markdown")
+        logger.info(f"User added: {new_user_id}")
         
     except ValueError:
         bot.reply_to(message, "❌ آیدی باید عدد باشد.")
@@ -322,82 +422,32 @@ def add_user_cmd(message):
 @bot.message_handler(commands=['removeuser'])
 def remove_user_cmd(message):
     if not is_admin(message.chat.id):
-        bot.reply_to(message, "⛔ فقط ادمین‌ها دسترسی دارند.")
         return
     
     try:
         parts = message.text.split()
         if len(parts) < 2:
-            bot.reply_to(message, "❌ فرمت صحیح: `/removeuser [ID]`", parse_mode="Markdown")
+            bot.reply_to(message, "❌ `/removeuser [ID]`", parse_mode="Markdown")
             return
         
         user_id = int(parts[1])
         users = load_users()
         
         if user_id in users.get("admins", []):
-            bot.reply_to(message, "⚠️ نمی‌توانید ادمین را حذف کنید.")
+            bot.reply_to(message, "⚠️ ادمین قابل حذف نیست.")
             return
         
         if user_id not in users.get("allowed", []):
-            bot.reply_to(message, "⚠️ این کاربر در لیست نیست.")
+            bot.reply_to(message, "⚠️ کاربر یافت نشد.")
             return
         
         users["allowed"].remove(user_id)
         save_users(users)
         bot.reply_to(message, f"✅ کاربر `{user_id}` حذف شد.", parse_mode="Markdown")
-        logger.info(f"User removed: {user_id} by {message.chat.id}")
+        logger.info(f"User removed: {user_id}")
         
     except ValueError:
         bot.reply_to(message, "❌ آیدی باید عدد باشد.")
-
-@bot.message_handler(commands=['addproduct'])
-def add_product_cmd(message):
-    if not is_admin(message.chat.id):
-        bot.reply_to(message, "⛔ فقط ادمین‌ها دسترسی دارند.")
-        return
-    
-    try:
-        parts = message.text.split(maxsplit=2)
-        if len(parts) < 3:
-            bot.reply_to(message, "❌ فرمت صحیح: `/addproduct [نام] [قیمت]`\nمثال: `/addproduct R5_BODY 2500`", 
-                        parse_mode="Markdown")
-            return
-        
-        name = parts[1].replace("_", " ")
-        price = float(parts[2])
-        
-        products = load_products()
-        products[name] = price
-        save_products(products)
-        
-        bot.reply_to(message, f"✅ محصول اضافه شد:\n*{name}* → ${price:,.0f}", parse_mode="Markdown")
-        logger.info(f"New product added: {name} = ${price} by {message.chat.id}")
-        
-    except ValueError:
-        bot.reply_to(message, "❌ قیمت باید عدد باشد.")
-
-@bot.message_handler(commands=['delproduct'])
-def delete_product_cmd(message):
-    if not is_admin(message.chat.id):
-        bot.reply_to(message, "⛔ فقط ادمین‌ها دسترسی دارند.")
-        return
-    
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        bot.reply_to(message, "❌ فرمت صحیح: `/delproduct [نام]`", parse_mode="Markdown")
-        return
-    
-    name = parts[1].replace("_", " ")
-    products = load_products()
-    
-    if name not in products:
-        bot.reply_to(message, f"⚠️ محصول '{name}' یافت نشد.")
-        return
-    
-    del products[name]
-    save_products(products)
-    bot.reply_to(message, f"✅ محصول *{name}* حذف شد.", parse_mode="Markdown")
-    logger.info(f"Product deleted: {name} by {message.chat.id}")
 
 @bot.message_handler(commands=['users'])
 def list_users(message):
@@ -405,178 +455,196 @@ def list_users(message):
         return
     
     users = load_users()
-    text = "👥 *لیست کاربران:*\n\n"
-    
-    text += "👑 *ادمین‌ها:*\n"
+    text = "╔══════════════════════════════╗\n"
+    text += "║      👥 *کاربران*\n"
+    text += "╠══════════════════════════════╣\n"
+    text += "║ *👑 ادمین‌ها:*\n"
     for uid in users.get("admins", []):
-        text += f"  • `{uid}`\n"
-    
-    text += "\n👤 *کاربران عادی:*\n"
+        text += f"║   `{uid}`\n"
+    text += "║ ─────────────────────\n"
+    text += "║ *👤 کاربران:*\n"
     for uid in users.get("allowed", []):
         if uid not in users.get("admins", []):
-            text += f"  • `{uid}`\n"
+            text += f"║   `{uid}`\n"
+    text += "╚══════════════════════════════╝"
     
     bot.reply_to(message, text, parse_mode="Markdown")
 
 # ---------- Text Button Handlers ----------
-@bot.message_handler(func=lambda m: m.text in ["📊 لیست محصولات", "💰 محاسبه قیمت", "⚙️ تنظیمات", "📈 آمار", "❓ راهنما"])
+@bot.message_handler(func=lambda m: m.text in ["📊 لیست محصولات", "💰 محاسبه قیمت", "⚙️ تنظیمات", "📈 آمار", "❓ راهنما", "👑 پنل ادمین"])
 def handle_menu_buttons(message):
     if not is_allowed(message.chat.id):
         return
     
     if message.text == "📊 لیست محصولات":
-        list_products(message)
+        list_products_cmd(message)
     elif message.text == "💰 محاسبه قیمت":
-        bot.reply_to(message, "💵 لطفاً نرخ دلار را ارسال کنید:\n(مثال: 58500)")
-        user_states[message.chat.id] = "waiting_rate"
+        bot.reply_to(message, "💵 نرخ دلار را بفرستید:\nمثال: `58500`", parse_mode="Markdown")
     elif message.text == "⚙️ تنظیمات":
         show_settings(message)
     elif message.text == "📈 آمار":
         show_stats(message)
     elif message.text == "❓ راهنما":
         send_help(message)
+    elif message.text == "👑 پنل ادمین":
+        if is_admin(message.chat.id):
+            show_admin_panel(message.chat.id)
+        else:
+            bot.reply_to(message, "⛔ دسترسی ندارید.")
 
 # ---------- Callback Query Handler ----------
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     user_id = call.message.chat.id
+    message_id = call.message.message_id
     
     if not is_admin(user_id):
         bot.answer_callback_query(call.id, "⛔ دسترسی ندارید!")
         return
     
+    # Add Product
     if call.data == "add_product":
         bot.answer_callback_query(call.id)
-        bot.send_message(user_id, 
-            "➕ *افزودن محصول جدید*\n\n"
-            "نام و قیمت را به این فرمت ارسال کنید:\n"
-            "`نام محصول | قیمت_دلار`\n\n"
-            "مثال: `Canon R5 BODY | 2500`",
-            parse_mode="Markdown"
-        )
+        text = "➕ *افزودن محصول*\n\nبه این فرمت بفرستید:\n`نام | قیمت`\n\nمثال:\n`Canon R5 | 2500`"
+        bot.edit_message_text(text, user_id, message_id, 
+                             parse_mode="Markdown", reply_markup=back_to_admin_keyboard())
         user_states[user_id] = "adding_product"
     
+    # Edit Product
     elif call.data == "edit_product":
         bot.answer_callback_query(call.id)
         products = load_products()
-        markup = InlineKeyboardMarkup(row_width=2)
-        for name in products:
-            markup.add(InlineKeyboardButton(name, callback_data=f"edit_{name}"))
+        
+        if not products:
+            bot.edit_message_text("📭 محصولی نیست.", user_id, message_id,
+                                 reply_markup=back_to_admin_keyboard())
+            return
+        
+        markup = InlineKeyboardMarkup(row_width=1)
+        for name, price in products.items():
+            markup.add(InlineKeyboardButton(f"✏️ {name} (${price})", callback_data=f"edit_{name}"))
         markup.add(InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin"))
-        bot.edit_message_text("✏️ محصول مورد نظر را انتخاب کنید:", 
-                             call.message.chat.id, call.message.message_id,
-                             reply_markup=markup)
+        
+        bot.edit_message_text("✏️ *انتخاب کنید:*", user_id, message_id,
+                             parse_mode="Markdown", reply_markup=markup)
     
     elif call.data.startswith("edit_"):
         product_name = call.data[5:]
         bot.answer_callback_query(call.id)
         products = load_products()
+        
         if product_name in products:
-            bot.send_message(user_id,
-                f"✏️ *ویرایش محصول*\n\n"
-                f"محصول: *{product_name}*\n"
-                f"قیمت فعلی: `${products[product_name]:,}`\n\n"
-                f"قیمت جدید را به دلار ارسال کنید:",
-                parse_mode="Markdown"
-            )
+            text = f"✏️ *{product_name}*\n💵 فعلی: `${products[product_name]:,}`\n\nقیمت جدید:"
+            bot.edit_message_text(text, user_id, message_id,
+                                 parse_mode="Markdown", reply_markup=back_to_admin_keyboard())
             user_states[user_id] = f"editing_{product_name}"
     
+    # Delete Product
     elif call.data == "delete_product":
         bot.answer_callback_query(call.id)
         products = load_products()
-        markup = InlineKeyboardMarkup(row_width=2)
-        for name in products:
-            markup.add(InlineKeyboardButton(f"🗑️ {name}", callback_data=f"del_{name}"))
+        
+        if not products:
+            bot.edit_message_text("📭 محصولی نیست.", user_id, message_id,
+                                 reply_markup=back_to_admin_keyboard())
+            return
+        
+        markup = InlineKeyboardMarkup(row_width=1)
+        for name, price in products.items():
+            markup.add(InlineKeyboardButton(f"🗑️ {name} (${price})", callback_data=f"del_{name}"))
         markup.add(InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin"))
-        bot.edit_message_text("🗑️ محصول مورد نظر برای حذف را انتخاب کنید:", 
-                             call.message.chat.id, call.message.message_id,
-                             reply_markup=markup)
+        
+        bot.edit_message_text("🗑️ *برای حذف انتخاب کنید:*", user_id, message_id,
+                             parse_mode="Markdown", reply_markup=markup)
     
     elif call.data.startswith("del_"):
         product_name = call.data[4:]
         products = load_products()
+        
         if product_name in products:
             del products[product_name]
             save_products(products)
             bot.answer_callback_query(call.id, f"✅ {product_name} حذف شد!")
-            bot.edit_message_text(f"✅ محصول *{product_name}* با موفقیت حذف شد.", 
-                                 call.message.chat.id, call.message.message_id,
-                                 parse_mode="Markdown")
+            
+            if products:
+                markup = InlineKeyboardMarkup(row_width=1)
+                for name, price in products.items():
+                    markup.add(InlineKeyboardButton(f"🗑️ {name} (${price})", callback_data=f"del_{name}"))
+                markup.add(InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin"))
+                bot.edit_message_text(f"✅ *{product_name}* حذف شد.\n\n🗑️ *حذف دیگر:*", 
+                                     user_id, message_id, parse_mode="Markdown", reply_markup=markup)
+            else:
+                bot.edit_message_text("✅ حذف شد. لیست خالی است.", 
+                                     user_id, message_id, reply_markup=quick_actions_keyboard())
+            
+            logger.info(f"Deleted: {product_name}")
+    
+    # List Products
+    elif call.data == "list_products":
+        bot.answer_callback_query(call.id)
+        products = load_products()
+        text = format_products_list(products)
+        bot.edit_message_text(text, user_id, message_id,
+                             parse_mode="Markdown", reply_markup=quick_actions_keyboard())
+    
+    # Settings
+    elif call.data == "set_markup":
+        bot.answer_callback_query(call.id)
+        settings = load_settings()
+        text = f"💰 *مارکاپ*\n\nفعلی: `{format_number(settings['base_markup'])}`\n\nمقدار جدید:"
+        bot.edit_message_text(text, user_id, message_id,
+                             parse_mode="Markdown", reply_markup=back_to_admin_keyboard())
+        user_states[user_id] = "setting_markup"
     
     elif call.data == "set_dirham":
         bot.answer_callback_query(call.id)
         settings = load_settings()
-        bot.send_message(user_id,
-            f"💵 *تغییر نرخ درهم*\n\n"
-            f"نرخ فعلی: `{settings['dirham_rate']}`\n\n"
-            f"نرخ جدید را ارسال کنید:",
-            parse_mode="Markdown"
-        )
+        text = f"💵 *نرخ درهم*\n\nفعلی: `{settings['dirham_rate']}`\n\nمقدار جدید:"
+        bot.edit_message_text(text, user_id, message_id,
+                             parse_mode="Markdown", reply_markup=back_to_admin_keyboard())
         user_states[user_id] = "setting_dirham"
-    
-    elif call.data == "set_markup":
-        bot.answer_callback_query(call.id)
-        settings = load_settings()
-        bot.send_message(user_id,
-            f"💰 *تغییر مارکاپ پایه*\n\n"
-            f"مارکاپ فعلی: `{settings['base_markup']:,}` تومان\n\n"
-            f"مارکاپ جدید را به تومان ارسال کنید:",
-            parse_mode="Markdown"
-        )
-        user_states[user_id] = "setting_markup"
     
     elif call.data == "set_percentages":
         bot.answer_callback_query(call.id)
         settings = load_settings()
         current = ', '.join([f'{int(p*100)}%' for p in settings['percentages']])
-        bot.send_message(user_id,
-            f"📊 *تغییر درصدها*\n\n"
-            f"درصدهای فعلی: `{current}`\n\n"
-            f"درصدهای جدید را با کاما جدا کنید:\n"
-            f"مثال: `3, 4, 5, 6, 10`",
-            parse_mode="Markdown"
-        )
+        text = f"📊 *درصدها*\n\nفعلی: `{current}`\n\nجدید (با کاما):\nمثال: `3, 4, 5, 6, 10`"
+        bot.edit_message_text(text, user_id, message_id,
+                             parse_mode="Markdown", reply_markup=back_to_admin_keyboard())
         user_states[user_id] = "setting_percentages"
     
+    # User Management
     elif call.data == "manage_users":
         bot.answer_callback_query(call.id)
         users = load_users()
-        text = "👥 *مدیریت کاربران*\n\n"
-        text += f"تعداد ادمین: {len(users.get('admins', []))}\n"
-        text += f"تعداد کاربران: {len(users.get('allowed', []))}\n\n"
-        text += "دستورات:\n"
-        text += "`/adduser [ID]` - افزودن\n"
-        text += "`/removeuser [ID]` - حذف\n"
-        text += "`/users` - لیست کاربران"
-        bot.send_message(user_id, text, parse_mode="Markdown")
+        text = f"👥 *کاربران*\n\n👑 ادمین: {len(users.get('admins', []))}\n👤 کاربر: {len(users.get('allowed', []))}\n\n"
+        text += "دستورات:\n`/adduser ID`\n`/removeuser ID`\n`/users`"
+        bot.edit_message_text(text, user_id, message_id,
+                             parse_mode="Markdown", reply_markup=back_to_admin_keyboard())
     
+    # Reset
     elif call.data == "reset_defaults":
         bot.answer_callback_query(call.id)
         markup = InlineKeyboardMarkup()
         markup.add(
-            InlineKeyboardButton("✅ بله، ریست شود", callback_data="confirm_reset"),
+            InlineKeyboardButton("✅ بله", callback_data="confirm_reset"),
             InlineKeyboardButton("❌ خیر", callback_data="back_admin")
         )
-        bot.edit_message_text("⚠️ آیا مطمئن هستید؟\nتمام محصولات و تنظیمات به حالت پیش‌فرض برمی‌گردند.",
-                             call.message.chat.id, call.message.message_id,
-                             reply_markup=markup)
+        bot.edit_message_text("⚠️ *ریست کامل؟*\nهمه چیز پاک می‌شود!",
+                             user_id, message_id, parse_mode="Markdown", reply_markup=markup)
     
     elif call.data == "confirm_reset":
         save_products(DEFAULT_PRODUCTS)
         save_settings(DEFAULT_SETTINGS)
-        bot.answer_callback_query(call.id, "✅ ریست انجام شد!")
-        bot.edit_message_text("✅ تمام تنظیمات به حالت پیش‌فرض برگشتند.",
-                             call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id, "✅ ریست شد!")
+        show_admin_panel(user_id, message_id)
+        logger.info(f"Reset by {user_id}")
     
+    # Back
     elif call.data == "back_admin":
         bot.answer_callback_query(call.id)
-        bot.edit_message_text("👑 *پنل مدیریت*\nیک گزینه انتخاب کنید:",
-                             call.message.chat.id, call.message.message_id,
-                             parse_mode="Markdown", reply_markup=admin_keyboard())
-    
-    elif call.data == "back_main":
-        bot.answer_callback_query(call.id)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        user_states.pop(user_id, None)
+        show_admin_panel(user_id, message_id)
 
 # ---------- Main Message Handler ----------
 @bot.message_handler(func=lambda message: True)
@@ -584,21 +652,17 @@ def handle_all_messages(message):
     user_id = message.chat.id
     
     if not is_allowed(user_id):
-        bot.reply_to(message, 
-            f"⛔ شما اجازه دسترسی ندارید.\n"
-            f"🆔 آیدی شما: `{user_id}`",
-            parse_mode="Markdown"
-        )
+        bot.reply_to(message, f"⛔ دسترسی ندارید.\n🆔 `{user_id}`", parse_mode="Markdown")
         return
     
     text = message.text.strip()
     state = user_states.get(user_id)
     
-    # ---------- Special States ----------
+    # Adding Product
     if state == "adding_product":
         try:
             if "|" not in text:
-                bot.reply_to(message, "❌ فرمت نادرست. از `|` برای جدا کردن استفاده کنید.")
+                bot.reply_to(message, "❌ از `|` استفاده کنید.\nمثال: `Canon R5 | 2500`", parse_mode="Markdown")
                 return
             
             name, price = text.split("|")
@@ -610,17 +674,19 @@ def handle_all_messages(message):
             save_products(products)
             
             del user_states[user_id]
-            bot.reply_to(message, f"✅ محصول *{name}* با قیمت ${price:,.0f} اضافه شد.", 
-                        parse_mode="Markdown")
-            logger.info(f"New product added: {name} = ${price}")
+            bot.reply_to(message, f"✅ *{name}* اضافه شد!\n💵 `${price:,.0f}`",
+                        parse_mode="Markdown", reply_markup=quick_actions_keyboard())
+            logger.info(f"Added: {name} = ${price}")
+            
         except ValueError:
             bot.reply_to(message, "❌ قیمت باید عدد باشد.")
         return
     
+    # Editing Product
     elif state and state.startswith("editing_"):
         try:
             product_name = state[8:]
-            new_price = float(text)
+            new_price = float(text.replace(",", ""))
             
             products = load_products()
             if product_name in products:
@@ -629,39 +695,41 @@ def handle_all_messages(message):
                 save_products(products)
                 
                 del user_states[user_id]
-                bot.reply_to(message, 
-                    f"✅ قیمت *{product_name}* تغییر کرد:\n"
-                    f"`${old_price:,.0f}` → `${new_price:,.0f}`",
-                    parse_mode="Markdown"
-                )
+                bot.reply_to(message, f"✅ *{product_name}*\n`${old_price:,.0f}` → `${new_price:,.0f}`",
+                            parse_mode="Markdown", reply_markup=quick_actions_keyboard())
+                logger.info(f"Updated: {product_name} ${old_price} -> ${new_price}")
+                
         except ValueError:
             bot.reply_to(message, "❌ قیمت باید عدد باشد.")
         return
     
+    # Settings
     elif state == "setting_dirham":
         try:
             new_rate = float(text)
             settings = load_settings()
+            old = settings['dirham_rate']
             settings['dirham_rate'] = new_rate
             save_settings(settings)
-            
             del user_states[user_id]
-            bot.reply_to(message, f"✅ نرخ درهم تغییر کرد به: `{new_rate}`", parse_mode="Markdown")
+            bot.reply_to(message, f"✅ درهم: `{old}` → `{new_rate}`", 
+                        parse_mode="Markdown", reply_markup=quick_actions_keyboard())
         except ValueError:
-            bot.reply_to(message, "❌ نرخ باید عدد باشد.")
+            bot.reply_to(message, "❌ عدد وارد کنید.")
         return
     
     elif state == "setting_markup":
         try:
             new_markup = float(text.replace(",", ""))
             settings = load_settings()
+            old = settings['base_markup']
             settings['base_markup'] = new_markup
             save_settings(settings)
-            
             del user_states[user_id]
-            bot.reply_to(message, f"✅ مارکاپ تغییر کرد به: `{new_markup:,.0f}` تومان", parse_mode="Markdown")
+            bot.reply_to(message, f"✅ مارکاپ:\n`{format_number(old)}` → `{format_number(new_markup)}`", 
+                        parse_mode="Markdown", reply_markup=quick_actions_keyboard())
         except ValueError:
-            bot.reply_to(message, "❌ مارکاپ باید عدد باشد.")
+            bot.reply_to(message, "❌ عدد وارد کنید.")
         return
     
     elif state == "setting_percentages":
@@ -670,136 +738,101 @@ def handle_all_messages(message):
             settings = load_settings()
             settings['percentages'] = percentages
             save_settings(settings)
-            
             del user_states[user_id]
             pct_str = ', '.join([f'{int(p*100)}%' for p in percentages])
-            bot.reply_to(message, f"✅ درصدها تغییر کرد به: `{pct_str}`", parse_mode="Markdown")
+            bot.reply_to(message, f"✅ درصدها: `{pct_str}`", 
+                        parse_mode="Markdown", reply_markup=quick_actions_keyboard())
         except:
-            bot.reply_to(message, "❌ فرمت نادرست. مثال: `3, 4, 5, 6, 10`")
+            bot.reply_to(message, "❌ مثال: `3, 4, 5, 6, 10`", parse_mode="Markdown")
         return
     
-    # ---------- Price Calculation ----------
+    # Price Calculation
     try:
         rate = float(text.replace(",", ""))
-        calculate_prices(message, rate)
+        products = load_products()
+        settings = load_settings()
+        
+        if not products:
+            bot.reply_to(message, "📭 محصولی ثبت نشده.")
+            return
+        
+        result = format_price_table(products, settings, rate)
+        
+        if len(result) > 4000:
+            parts = [result[i:i+4000] for i in range(0, len(result), 4000)]
+            for part in parts:
+                bot.send_message(message.chat.id, part, parse_mode="Markdown")
+        else:
+            bot.reply_to(message, result, parse_mode="Markdown")
+        
+        logger.info(f"Calc: rate={rate} by {user_id}")
+        
     except ValueError:
-        bot.reply_to(message, 
-            "❌ پیام نامعتبر.\n\n"
-            "• برای محاسبه قیمت، نرخ دلار را ارسال کنید\n"
-            "• یا از منوی زیر استفاده کنید:",
-            reply_markup=main_keyboard()
-        )
-
-def calculate_prices(message, rate):
-    """محاسبه و نمایش قیمت‌ها"""
-    products = load_products()
-    settings = load_settings()
-    
-    if not products:
-        bot.reply_to(message, "📭 هیچ محصولی ثبت نشده است.")
-        return
-    
-    dirham_rate = settings['dirham_rate']
-    base_markup = settings['base_markup']
-    percentages = settings['percentages']
-    round_to = settings['round_to']
-    
-    result = f"📊 *نرخ تبدیل:* `{rate:,.0f}` تومان\n"
-    result += f"💵 *نرخ درهم:* `{dirham_rate}`\n"
-    result += "━" * 25 + "\n\n"
-    
-    for name, base_price in products.items():
-        # Formula: (USD price × dirham rate × toman rate) + markup
-        price = ((base_price * dirham_rate) * rate) + base_markup
-        
-        result += f"🔹 *{name}* @${base_price:,}\n"
-        
-        for pct in percentages:
-            calc = price * (1 + pct)
-            calc = round(calc, round_to)
-            result += f"    +{int(pct*100)}% → `{calc:,.0f}`\n"
-        
-        result += "\n"
-    
-    result += "━" * 25 + "\n"
-    result += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-    
-    # تقسیم پیام اگر خیلی طولانی باشد
-    if len(result) > 4000:
-        parts = [result[i:i+4000] for i in range(0, len(result), 4000)]
-        for part in parts:
-            bot.send_message(message.chat.id, part, parse_mode="Markdown")
-    else:
-        bot.reply_to(message, result, parse_mode="Markdown")
-    
-    logger.info(f"Price calculation done with rate {rate} by {message.chat.id}")
+        bot.reply_to(message, "💡 نرخ دلار را بفرستید.\nمثال: `58500`",
+                    parse_mode="Markdown", reply_markup=main_keyboard(user_id))
 
 # ---------- Bot Runner ----------
 def send_startup_message():
-    """Send startup notification to all admins"""
     users = load_users()
     admins = users.get("admins", ADMIN_IDS)
+    products = load_products()
+    settings = load_settings()
     
-    startup_text = f"""
-🤖 *Bot Started Successfully!*
-
-⏰ Time: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
-📦 Products: {len(load_products())}
-👥 Users: {len(users.get('allowed', []))}
-
-✅ Bot is now online and ready!
+    text = f"""
+╔══════════════════════════════╗
+║  🤖 *Bot Started!*
+╠══════════════════════════════╣
+║ ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}
+║ 📦 Products: {len(products)}
+║ 💰 Markup: {format_number(settings['base_markup'])}
+║ ✅ Ready!
+╚══════════════════════════════╝
 """
     
     for admin_id in admins:
         try:
-            bot.send_message(admin_id, startup_text, parse_mode="Markdown")
-            logger.info(f"Startup message sent to admin: {admin_id}")
+            bot.send_message(admin_id, text, parse_mode="Markdown", reply_markup=main_keyboard(admin_id))
+            logger.info(f"Startup sent to: {admin_id}")
         except Exception as e:
-            logger.error(f"Failed to send startup message to {admin_id}: {e}")
+            logger.error(f"Failed startup to {admin_id}: {e}")
 
 if __name__ == "__main__":
     logger.info("=" * 50)
-    logger.info("STARTING Camera Pricer Bot...")
+    logger.info("STARTING Camera Pricer Bot v2.0...")
     logger.info("=" * 50)
     
-    # Create default files if not exist
     if not PRODUCTS_FILE.exists():
         save_products(DEFAULT_PRODUCTS)
-        logger.info("Created default products.json")
+        logger.info("Created products.json")
     
     if not SETTINGS_FILE.exists():
         save_settings(DEFAULT_SETTINGS)
-        logger.info("Created default settings.json")
+        logger.info("Created settings.json")
     
     if not USERS_FILE.exists():
         save_users({"allowed": ADMIN_IDS, "admins": ADMIN_IDS})
-        logger.info("Created default users.json")
+        logger.info("Created users.json")
     
     logger.info(f"Admin IDs: {ADMIN_IDS}")
-    logger.info(f"Products loaded: {len(load_products())}")
+    logger.info(f"Products: {len(load_products())}")
     
-    # Test bot connection
     try:
         bot_info = bot.get_me()
-        logger.info(f"SUCCESS: Connected as @{bot_info.username}")
+        logger.info(f"SUCCESS: @{bot_info.username}")
     except Exception as e:
-        logger.error(f"FATAL: Could not connect to Telegram: {e}")
+        logger.error(f"FATAL: {e}")
         sys.exit(1)
     
-    # Send startup message to admins
-    logger.info("Sending startup messages to admins...")
     send_startup_message()
     
     logger.info("=" * 50)
-    logger.info("Bot is now RUNNING! Waiting for messages...")
+    logger.info("Bot RUNNING!")
     logger.info("=" * 50)
     
-    # Start polling with auto-restart
     while True:
         try:
             bot.polling(none_stop=True, interval=1, timeout=60)
         except Exception as e:
-            logger.error(f"Polling error: {e}")
-            logger.info("Restarting in 5 seconds...")
+            logger.error(f"Error: {e}")
             import time
             time.sleep(5)
